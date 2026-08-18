@@ -27,6 +27,25 @@ type TopApplication = {
   count: number
 }
 
+type UsageOverview = {
+  uniqueUsers: number
+  resolvedCount: number
+  notResolvedCount: number
+}
+
+type MetricTotal = {
+  unit: string
+  total: number
+}
+
+// Rotulo amigavel para cada unidade de metrica - adicione aqui
+// conforme novas metricas forem instrumentadas nos modulos .psm1
+const METRIC_UNIT_LABELS: Record<string, (total: number) => string> = {
+  GB: (total) => `${total} GB liberados na limpeza de cache`,
+  entradas: (total) => `${total} entradas de registro removidas`,
+  ms: (total) => `${total} ms (soma bruta - use com cautela)`,
+}
+
 // Traduz o "function_name" tecnico para um rotulo amigavel na tela
 const FUNCTION_NAME_LABELS: Record<string, string> = {
   APPLICATIONS: "Reinicio de Aplicativo",
@@ -64,6 +83,8 @@ export default function Dashboard({ userName }: { userName: string }) {
     statuses: [],
   })
   const [topApplications, setTopApplications] = useState<TopApplication[]>([])
+  const [usageOverview, setUsageOverview] = useState<UsageOverview>({ uniqueUsers: 0, resolvedCount: 0, notResolvedCount: 0 })
+  const [metricTotals, setMetricTotals] = useState<MetricTotal[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -109,6 +130,8 @@ export default function Dashboard({ userName }: { userName: string }) {
         if (eventsData.error) throw new Error(eventsData.error)
         setEvents(eventsData.events ?? [])
         setTopApplications(statsData.topApplications ?? [])
+        setUsageOverview(statsData.usageOverview ?? { uniqueUsers: 0, resolvedCount: 0, notResolvedCount: 0 })
+        setMetricTotals(statsData.metricTotals ?? [])
       })
       .catch((err) => setError(String(err.message ?? err)))
       .finally(() => setLoading(false))
@@ -129,7 +152,7 @@ export default function Dashboard({ userName }: { userName: string }) {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-8">
+    <div className="max-w-[1800px] mx-auto px-6 py-8">
       {/* Cabecalho */}
       <div className="flex items-center justify-between mb-8">
         <div>
@@ -227,6 +250,71 @@ export default function Dashboard({ userName }: { userName: string }) {
         </div>
       </div>
 
+      {/* Visao geral de uso + metricas acumuladas */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+
+        {/* Quantas pessoas usaram / resolvido / nao resolvido */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <h2 className="text-sm font-medium text-slate-400 mb-4">Visao geral de uso (no filtro atual)</h2>
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="bg-slate-800 rounded-lg p-3 text-center">
+              <div className="text-2xl font-semibold text-white">{usageOverview.uniqueUsers}</div>
+              <div className="text-xs text-slate-400 mt-1">Usuarios unicos</div>
+            </div>
+            <div className="bg-slate-800 rounded-lg p-3 text-center">
+              <div className="text-2xl font-semibold text-emerald-400">{usageOverview.resolvedCount}</div>
+              <div className="text-xs text-slate-400 mt-1">Resolvido</div>
+            </div>
+            <div className="bg-slate-800 rounded-lg p-3 text-center">
+              <div className="text-2xl font-semibold text-red-400">{usageOverview.notResolvedCount}</div>
+              <div className="text-xs text-slate-400 mt-1">Nao resolvido</div>
+            </div>
+          </div>
+
+          {/* Barra simples resolvido vs nao resolvido - sem biblioteca de grafico */}
+          {(usageOverview.resolvedCount + usageOverview.notResolvedCount) > 0 && (
+            <div>
+              <div className="flex h-2.5 rounded-full overflow-hidden bg-slate-800">
+                <div
+                  className="bg-emerald-500"
+                  style={{
+                    width: `${(usageOverview.resolvedCount / (usageOverview.resolvedCount + usageOverview.notResolvedCount)) * 100}%`,
+                  }}
+                />
+                <div
+                  className="bg-red-500"
+                  style={{
+                    width: `${(usageOverview.notResolvedCount / (usageOverview.resolvedCount + usageOverview.notResolvedCount)) * 100}%`,
+                  }}
+                />
+              </div>
+              <div className="text-xs text-slate-500 mt-1.5">
+                {Math.round((usageOverview.resolvedCount / (usageOverview.resolvedCount + usageOverview.notResolvedCount)) * 100)}% resolvido de primeira
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Totais de metricas numericas (GB limpos, entradas de registro, etc.) */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <h2 className="text-sm font-medium text-slate-400 mb-4">Totais acumulados (no filtro atual)</h2>
+          {metricTotals.length === 0 ? (
+            <p className="text-sm text-slate-500">Nenhuma metrica numerica registrada nesse filtro ainda.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {metricTotals.map((m) => (
+                <div key={m.unit} className="bg-slate-800 rounded-lg p-3">
+                  <div className="text-xl font-semibold text-purple-300">{m.total}</div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    {METRIC_UNIT_LABELS[m.unit] ? METRIC_UNIT_LABELS[m.unit](m.total).replace(`${m.total} `, "") : m.unit}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Resumo - aplicacoes mais usadas */}
       {topApplications.length > 0 && (
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-6">
@@ -299,7 +387,7 @@ export default function Dashboard({ userName }: { userName: string }) {
                       {ev.status}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-slate-400 max-w-md truncate" title={ev.details ?? ""}>
+                  <td className="px-4 py-3 text-slate-400 max-w-xl truncate" title={ev.details ?? ""}>
                     {ev.details ?? "—"}
                   </td>
                 </tr>
