@@ -88,6 +88,17 @@ export default function Dashboard({ userName }: { userName: string }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // FIX (v1.4.0): paginacao - antes a tabela vinha sempre limitada a
+  // 100-500 linhas (o que a API antiga permitia), sem nenhuma forma
+  // de ver o resto. Agora navega por paginas de tamanho fixo.
+  const [page, setPage] = useState(1)
+  const [totalCount, setTotalCount] = useState(0)
+  const pageSize = 50
+
+  // FIX (v1.4.0): hora da ultima atualizacao - mostrado na tela junto
+  // com o indicador de auto-atualizacao (ver useEffect mais abaixo)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+
   // Estado dos filtros
   const [environment, setEnvironment] = useState("")
   const [application, setApplication] = useState("")
@@ -96,6 +107,15 @@ export default function Dashboard({ userName }: { userName: string }) {
   const [username, setUsername] = useState("")
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
+
+  // Sempre que um FILTRO muda (nao a pagina), volta pra pagina 1 -
+  // sem isso, trocar um filtro enquanto na pagina 5 poderia mostrar
+  // uma pagina 5 vazia dos resultados novos, em vez de recomecar do
+  // topo.
+  useEffect(() => {
+    setPage(1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [environment, application, functionName, status, username, dateFrom, dateTo])
 
   // Carrega as opcoes de filtro uma vez, ao montar a tela
   useEffect(() => {
@@ -121,24 +141,46 @@ export default function Dashboard({ userName }: { userName: string }) {
     setLoading(true)
     setError(null)
     const qs = buildQueryString()
+    // page/page_size so pertencem a busca de eventos - /api/stats
+    // ignora esses dois parametros, entao e seguro so anexar aqui
+    const eventsQs = `${qs}${qs ? "&" : ""}page=${page}&page_size=${pageSize}`
 
     Promise.all([
-      fetch(`/api/events?${qs}`).then((r) => r.json()),
+      fetch(`/api/events?${eventsQs}`).then((r) => r.json()),
       fetch(`/api/stats?${qs}`).then((r) => r.json()),
     ])
       .then(([eventsData, statsData]) => {
         if (eventsData.error) throw new Error(eventsData.error)
         setEvents(eventsData.events ?? [])
+        setTotalCount(eventsData.totalCount ?? 0)
         setTopApplications(statsData.topApplications ?? [])
         setUsageOverview(statsData.usageOverview ?? { uniqueUsers: 0, resolvedCount: 0, notResolvedCount: 0 })
         setMetricTotals(statsData.metricTotals ?? [])
+        setLastUpdated(new Date())
       })
       .catch((err) => setError(String(err.message ?? err)))
       .finally(() => setLoading(false))
-  }, [buildQueryString])
+  }, [buildQueryString, page])
 
   useEffect(() => {
     loadEvents()
+  }, [loadEvents])
+
+  // ==============================================================
+  // FIX (v1.4.0): atualizacao automatica
+  // --------------------------------------------------------------
+  // Antes a tela so atualizava quando o usuario mexia em algum
+  // filtro. Agora recarrega sozinha a cada 30 segundos, mantendo
+  // os filtros e a pagina atual. Quando "loadEvents" muda (filtro
+  // ou pagina diferente), o efeito limpa o timer antigo e cria um
+  // novo automaticamente - nunca ficam dois timers rodando ao
+  // mesmo tempo.
+  // ==============================================================
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadEvents()
+    }, 30000)
+    return () => clearInterval(interval)
   }, [loadEvents])
 
   const clearFilters = () => {
@@ -159,7 +201,12 @@ export default function Dashboard({ userName }: { userName: string }) {
           <h1 className="text-2xl font-semibold text-white">Agent IT — Dashboard</h1>
           <p className="text-slate-400 text-sm mt-1">JEM Systems - IT Support</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
+          {lastUpdated && (
+            <span className="text-xs text-slate-500">
+              Atualizado às {lastUpdated.toLocaleTimeString("pt-BR")} · atualiza a cada 30s
+            </span>
+          )}
           <span className="text-sm text-slate-400">{userName}</span>
           <button
             onClick={() => signOut({ callbackUrl: "/login" })}
@@ -394,6 +441,37 @@ export default function Dashboard({ userName }: { userName: string }) {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* FIX (v1.4.0): controles de paginacao - antes a tabela nao
+            tinha nenhuma forma de navegar alem do que a API antiga
+            trazia de uma vez (ate 500 linhas, sem aviso do que ficava
+            de fora). */}
+        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-800">
+          <span className="text-xs text-slate-500">
+            {totalCount > 0
+              ? `Mostrando ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, totalCount)} de ${totalCount}`
+              : "Nenhum resultado"}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="text-sm px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-slate-800 text-slate-200 transition-colors"
+            >
+              ← Anterior
+            </button>
+            <span className="text-xs text-slate-500 px-2">
+              Página {page} de {Math.max(1, Math.ceil(totalCount / pageSize))}
+            </span>
+            <button
+              onClick={() => setPage((p) => p + 1)}
+              disabled={page * pageSize >= totalCount}
+              className="text-sm px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-slate-800 text-slate-200 transition-colors"
+            >
+              Próxima →
+            </button>
+          </div>
         </div>
       </div>
     </div>
